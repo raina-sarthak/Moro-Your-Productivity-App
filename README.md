@@ -1,6 +1,8 @@
 # Moro-Your-Productivity-App
 
 Moro is a productivity app designed to help users manage their tasks, schedule, and boost their productivity. Built with Expo, this app is perfect for anyone looking to enhance their productivity with a simple yet effective interface.
+- **Note**: This is a front-end project right now. Data integration is not done yet. It is soon to be added. Test data is displayed, while I work on the data integration.
+
 
 ## Features
 - **Task Management**: Create, update, and delete tasks.
