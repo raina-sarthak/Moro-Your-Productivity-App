@@ -8,6 +8,7 @@ import Animated, {
   Extrapolate
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
+import { storage } from '../../utils/storage';
 
 type TimerMode = 'work' | 'break';
 
@@ -18,8 +19,20 @@ export default function TimerScreen() {
   const [isActive, setIsActive] = useState(false);
   const [mode, setMode] = useState<TimerMode>('work');
   const [completedPomodoros, setCompletedPomodoros] = useState(0);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   
   const progress = useSharedValue(1);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    const settings = await storage.loadTimerSettings();
+    setWorkDuration(settings.workDuration);
+    setBreakDuration(settings.breakDuration);
+    setTimeLeft(settings.workDuration * 60);
+  };
 
   useEffect(() => {
     setTimeLeft(mode === 'work' ? workDuration * 60 : breakDuration * 60);
@@ -29,6 +42,10 @@ export default function TimerScreen() {
     let interval: NodeJS.Timeout | null = null;
 
     if (isActive && timeLeft > 0) {
+      if (!sessionStartTime) {
+        setSessionStartTime(Date.now());
+      }
+      
       interval = setInterval(() => {
         setTimeLeft((timeLeft) => timeLeft - 1);
         progress.value = withTiming(timeLeft / (mode === 'work' ? workDuration * 60 : breakDuration * 60), {
@@ -36,8 +53,7 @@ export default function TimerScreen() {
         });
       }, 1000);
     } else if (timeLeft === 0) {
-      Vibration.vibrate([500, 500, 500, 500, 500]);
-      setIsActive(false);
+      handleSessionComplete();
     }
 
     return () => {
@@ -45,7 +61,31 @@ export default function TimerScreen() {
     };
   }, [isActive, timeLeft]);
 
+  const handleSessionComplete = async () => {
+    if (sessionStartTime) {
+      const session = {
+        id: Date.now().toString(),
+        mode,
+        duration: mode === 'work' ? workDuration * 60 : breakDuration * 60,
+        startTime: sessionStartTime,
+        endTime: Date.now(),
+      };
+      await storage.saveSession(session);
+      
+      if (mode === 'work') {
+        setCompletedPomodoros(prev => prev + 1);
+      }
+    }
+    
+    Vibration.vibrate([500, 500, 500, 500, 500]);
+    setIsActive(false);
+    setSessionStartTime(null);
+  };
+
   const toggleTimer = () => {
+    if (!isActive) {
+      setSessionStartTime(Date.now());
+    }
     setIsActive(!isActive);
   };
 
@@ -53,12 +93,14 @@ export default function TimerScreen() {
     setIsActive(false);
     setTimeLeft(mode === 'work' ? workDuration * 60 : breakDuration * 60);
     progress.value = withTiming(1, { duration: 500 });
+    setSessionStartTime(null);
   };
 
   const switchMode = (newMode: TimerMode) => {
     setMode(newMode);
     setTimeLeft(newMode === 'work' ? workDuration * 60 : breakDuration * 60);
     progress.value = withTiming(1, { duration: 500 });
+    setSessionStartTime(null);
   };
 
   const formatTime = (seconds: number) => {
@@ -83,7 +125,7 @@ export default function TimerScreen() {
     };
   }, [progress, mode]);
 
-  const adjustTime = (type: 'work' | 'break', amount: number) => {
+  const adjustTime = async (type: 'work' | 'break', amount: number) => {
     if (isActive) return;
     
     if (type === 'work') {
@@ -99,6 +141,11 @@ export default function TimerScreen() {
         setTimeLeft(newValue * 60);
       }
     }
+
+    await storage.saveTimerSettings({
+      workDuration: type === 'work' ? Math.max(5, Math.min(60, workDuration + amount)) : workDuration,
+      breakDuration: type === 'break' ? Math.max(1, Math.min(15, breakDuration + amount)) : breakDuration,
+    });
   };
 
   return (

@@ -1,272 +1,295 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
+import { storage } from '../../utils/storage';
 
-type TimePeriod = 'day' | 'week' | 'month';
+type Period = 'day' | 'week' | 'month';
 
-// Sample data for demonstration
-const sampleData = {
-  day: {
-    labels: ['6AM', '9AM', '12PM', '3PM', '6PM', '9PM'],
-    datasets: [{
-      data: [30, 45, 28, 80, 99, 43],
-    }],
-  },
-  week: {
-    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    datasets: [{
-      data: [120, 90, 150, 180, 200, 60, 30],
-    }],
-  },
-  month: {
-    labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
-    datasets: [{
-      data: [600, 750, 800, 900],
-    }],
-  },
-};
+interface ProductivityData {
+  date: string;
+  focusTime: number;
+  tasksCompleted: number;
+  sessionsCompleted: number;
+}
 
 export default function TrackerScreen() {
-  const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('week');
-  const screenWidth = Dimensions.get('window').width - 70;
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>('week');
+  const [focusTime, setFocusTime] = useState(0);
+  const [tasksCompleted, setTasksCompleted] = useState(0);
+  const [productivityScore, setProductivityScore] = useState(0);
+  const [chartData, setChartData] = useState<{ labels: string[]; data: number[] }>({
+    labels: [],
+    data: [],
+  });
 
-  const chartConfig = {
-    backgroundColor: '#222',
-    backgroundGradientFrom: '#222',
-    backgroundGradientTo: '#222',
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(0, 122, 255, ${opacity})`,
-    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-    style: {
-      borderRadius: 12,
-    },
-    propsForDots: {
-      r: '4',
-      strokeWidth: '2',
-      stroke: '#007AFF',
-    },
-    propsForBackgroundLines: {
-      stroke: '#444',
-      strokeWidth: 1,
-    },
-    propsForLabels: {
-      fontSize: 11,
-    },
-    formatYLabel: (yLabel: string) => `${yLabel}m`,
-    paddingRight: 0,
-    paddingTop: 0,
+  // Calculate chart dimensions
+  const screenWidth = Dimensions.get('window').width;
+  const dataPointWidth = 60; // Width allocated for each data point
+  const chartWidth = Math.max(screenWidth - 32, dataPointWidth * chartData.labels.length);
+
+  useEffect(() => {
+    loadData();
+  }, [selectedPeriod]);
+
+  const loadData = async () => {
+    const days = selectedPeriod === 'day' ? 1 : selectedPeriod === 'week' ? 7 : 30;
+    const productivityData = await storage.loadProductivityData(days);
+    const sessions = await storage.loadSessions();
+    const todos = await storage.loadTodos();
+
+    // Calculate focus time from sessions
+    const totalFocusTime = sessions.reduce((total, session) => {
+      if (session.mode === 'work') {
+        return total + (session.endTime - session.startTime) / 1000 / 60;
+      }
+      return total;
+    }, 0);
+    setFocusTime(Math.round(totalFocusTime));
+
+    // Calculate completed tasks
+    const completedTasksCount = todos.filter(todo => todo.completed).length;
+    setTasksCompleted(completedTasksCount);
+
+    // Calculate productivity score (0-100)
+    const score = Math.min(100, Math.round((totalFocusTime / (25 * days) + completedTasksCount / days) * 50));
+    setProductivityScore(score);
+
+    // Prepare chart data
+    const labels: string[] = [];
+    const data: number[] = [];
+    
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toLocaleDateString('en-US', { 
+        month: 'short',
+        day: 'numeric'
+      });
+      
+      labels.push(dateStr);
+      
+      const dayData = productivityData.find(d => {
+        const dataDate = new Date(d.date);
+        return dataDate.toDateString() === date.toDateString();
+      });
+      
+      // Ensure we have a valid number for the chart
+      const focusMinutes = dayData?.focusTime || 0;
+      data.push(Math.max(0, focusMinutes)); // Prevent negative values
+    }
+
+    setChartData({ labels, data });
   };
 
   return (
-    <ScrollView 
-      style={styles.scrollContainer}
-      contentContainerStyle={styles.scrollContent}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.container}>
-        <Text style={styles.title}>Productivity Tracker</Text>
+    <ScrollView style={styles.container}>
+      <Text style={styles.title}>Productivity Tracker</Text>
 
-        <View style={styles.periodSelector}>
-          <TouchableOpacity 
-            style={[styles.periodButton, selectedPeriod === 'day' && styles.activePeriodButton]}
-            onPress={() => setSelectedPeriod('day')}
+      <View style={styles.periodSelector}>
+        {(['day', 'week', 'month'] as Period[]).map((period) => (
+          <TouchableOpacity
+            key={period}
+            style={[
+              styles.periodButton,
+              selectedPeriod === period && styles.selectedPeriod,
+            ]}
+            onPress={() => setSelectedPeriod(period)}
           >
-            <Text style={[styles.periodText, selectedPeriod === 'day' && styles.activePeriodText]}>
-              Day
+            <Text
+              style={[
+                styles.periodButtonText,
+                selectedPeriod === period && styles.selectedPeriodText,
+              ]}
+            >
+              {period.charAt(0).toUpperCase() + period.slice(1)}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.periodButton, selectedPeriod === 'week' && styles.activePeriodButton]}
-            onPress={() => setSelectedPeriod('week')}
-          >
-            <Text style={[styles.periodText, selectedPeriod === 'week' && styles.activePeriodText]}>
-              Week
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.periodButton, selectedPeriod === 'month' && styles.activePeriodButton]}
-            onPress={() => setSelectedPeriod('month')}
-          >
-            <Text style={[styles.periodText, selectedPeriod === 'month' && styles.activePeriodText]}>
-              Month
-            </Text>
-          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.metricsContainer}>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>{focusTime}</Text>
+          <Text style={styles.metricLabel}>Focus Minutes</Text>
         </View>
-
-        <View style={styles.metricsContainer}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Focus Time</Text>
-            <Text style={styles.metricValue}>2h 30m</Text>
-            <Text style={styles.metricChange}>+15% from last {selectedPeriod}</Text>
-          </View>
-
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Tasks Completed</Text>
-            <Text style={styles.metricValue}>12</Text>
-            <Text style={styles.metricChange}>+3 from last {selectedPeriod}</Text>
-          </View>
-
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Productivity Score</Text>
-            <Text style={styles.metricValue}>85%</Text>
-            <Text style={styles.metricChange}>+5% from last {selectedPeriod}</Text>
-          </View>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>{tasksCompleted}</Text>
+          <Text style={styles.metricLabel}>Tasks Done</Text>
         </View>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>{productivityScore}</Text>
+          <Text style={styles.metricLabel}>Productivity</Text>
+        </View>
+      </View>
 
-        <View style={styles.chartContainer}>
-          <Text style={styles.chartTitle}>Focus Time Trend</Text>
-          <View style={styles.chartWrapper}>
+      <View style={styles.chartContainer}>
+        <Text style={styles.chartTitle}>Focus Time Trend</Text>
+        {chartData.data.length > 0 && (
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={true}
+            contentContainerStyle={styles.chartScrollContent}
+          >
             <LineChart
-              data={sampleData[selectedPeriod]}
-              width={screenWidth}
-              height={180}
-              chartConfig={chartConfig}
+              data={{
+                labels: chartData.labels,
+                datasets: [{
+                  data: chartData.data.length > 0 ? chartData.data : [0],
+                  color: (opacity = 1) => `rgba(0, 122, 255, ${opacity})`,
+                  strokeWidth: 2
+                }],
+              }}
+              width={chartWidth}
+              height={220}
+              chartConfig={{
+                backgroundColor: '#1e1e1e',
+                backgroundGradientFrom: '#1e1e1e',
+                backgroundGradientTo: '#1e1e1e',
+                decimalPlaces: 0,
+                color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+                style: {
+                  borderRadius: 16,
+                },
+                propsForDots: {
+                  r: 6,
+                  strokeWidth: 2,
+                  stroke: '#007AFF'
+                },
+                propsForLabels: {
+                  fontSize: 10,
+                  rotation: 45
+                },
+                formatYLabel: (value) => Math.round(value).toString(),
+              }}
               bezier
               style={styles.chart}
               withDots={true}
               withInnerLines={true}
-              withOuterLines={false}
-              withVerticalLines={false}
+              withOuterLines={true}
+              withVerticalLines={true}
               withHorizontalLines={true}
               withVerticalLabels={true}
               withHorizontalLabels={true}
-              segments={4}
+              yAxisInterval={1}
+              segments={5}
               fromZero={true}
-              getDotColor={() => '#007AFF'}
             />
-          </View>
-        </View>
+          </ScrollView>
+        )}
+      </View>
 
-        <View style={styles.insightsContainer}>
-          <Text style={styles.insightsTitle}>Insights</Text>
-          <View style={styles.insightCard}>
-            <Ionicons name="bulb-outline" size={24} color="#007AFF" />
-            <Text style={styles.insightText}>
-              You're most productive between 10 AM and 12 PM
-            </Text>
-          </View>
-          <View style={styles.insightCard}>
-            <Ionicons name="trending-up-outline" size={24} color="#4CAF50" />
-            <Text style={styles.insightText}>
-              Your focus time has increased by 15% this week
-            </Text>
-          </View>
-        </View>
+      <View style={styles.insightsContainer}>
+        <Text style={styles.insightsTitle}>Insights</Text>
+        <Text style={styles.insightText}>
+          {productivityScore >= 80
+            ? "You're crushing it! Keep up the great work! 🚀"
+            : productivityScore >= 60
+            ? "Good progress! Try to maintain consistency. 💪"
+            : "Focus on small wins to build momentum. 🌱"}
+        </Text>
+        <Text style={styles.insightText}>
+          {`Average daily focus time: ${Math.round(focusTime / (selectedPeriod === 'day' ? 1 : selectedPeriod === 'week' ? 7 : 30))} minutes`}
+        </Text>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollContainer: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
   container: {
     flex: 1,
-    padding: 20,
-    paddingTop: 50,
+    backgroundColor: '#121212',
+    padding: 16,
+    paddingTop: 60,
   },
   title: {
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#fff',
     marginBottom: 20,
   },
   periodSelector: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
     marginBottom: 20,
+    backgroundColor: '#1e1e1e',
+    borderRadius: 12,
+    padding: 4,
   },
   periodButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 10,
-    backgroundColor: '#333',
-    marginHorizontal: 5,
-    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
   },
-  activePeriodButton: {
-    backgroundColor: '#007AFF',
+  selectedPeriod: {
+    backgroundColor: '#2e2e2e',
   },
-  periodText: {
-    color: '#fff',
+  periodButtonText: {
+    color: '#888',
     fontSize: 16,
-    fontWeight: 'bold',
   },
-  activePeriodText: {
+  selectedPeriodText: {
     color: '#fff',
   },
   metricsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 20,
   },
   metricCard: {
-    backgroundColor: '#333',
-    padding: 20,
-    borderRadius: 15,
-    marginBottom: 15,
-  },
-  metricLabel: {
-    color: '#666',
-    fontSize: 16,
-    marginBottom: 5,
+    flex: 1,
+    backgroundColor: '#1e1e1e',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 4,
+    alignItems: 'center',
   },
   metricValue: {
-    color: '#fff',
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 5,
+    color: '#fff',
+    marginBottom: 4,
   },
-  metricChange: {
-    color: '#4CAF50',
+  metricLabel: {
     fontSize: 14,
+    color: '#888',
   },
   chartContainer: {
+    backgroundColor: '#1e1e1e',
+    borderRadius: 12,
+    padding: 16,
     marginBottom: 20,
-    backgroundColor: '#333',
-    borderRadius: 15,
-    padding: 15,
+  },
+  chartScrollContent: {
+    paddingRight: 16,
   },
   chartTitle: {
-    color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 15,
-  },
-  chartWrapper: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    overflow: 'hidden',
+    color: '#fff',
+    marginBottom: 16,
   },
   chart: {
     borderRadius: 12,
   },
   insightsContainer: {
+    backgroundColor: '#1e1e1e',
+    borderRadius: 12,
+    padding: 16,
     marginBottom: 20,
   },
   insightsTitle: {
-    color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 15,
-  },
-  insightCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#333',
-    padding: 15,
-    borderRadius: 15,
-    marginBottom: 10,
+    color: '#fff',
+    marginBottom: 12,
   },
   insightText: {
-    color: '#fff',
     fontSize: 16,
-    marginLeft: 10,
-    flex: 1,
+    color: '#fff',
+    marginBottom: 8,
+    lineHeight: 24,
   },
 }); 

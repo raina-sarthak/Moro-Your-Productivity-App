@@ -1,12 +1,7 @@
 import { Text, View, StyleSheet, TextInput, TouchableOpacity, FlatList } from 'react-native';
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
-
-type Todo = {
-  id: string;
-  text: string;
-  completed: boolean;
-};
+import { storage, Todo } from '../../utils/storage';
 
 type TabType = 'active' | 'completed';
 
@@ -14,6 +9,15 @@ export default function TasksScreen() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('active');
+
+  useEffect(() => {
+    loadTodos();
+  }, []);
+
+  const loadTodos = async () => {
+    const loadedTodos = await storage.loadTodos();
+    setTodos(loadedTodos);
+  };
 
   const { activeTodos, completedTodos } = useMemo(() => {
     return {
@@ -26,25 +30,52 @@ export default function TasksScreen() {
   const totalTasks = todos.length;
   const progress = totalTasks > 0 ? completedTasks / totalTasks : 0;
 
-  const addTodo = () => {
+  const addTodo = async () => {
     if (newTodo.trim()) {
-      setTodos([...todos, { id: Date.now().toString(), text: newTodo, completed: false }]);
+      const newTodos = [...todos, {
+        id: Date.now().toString(),
+        text: newTodo,
+        completed: false,
+        createdAt: Date.now()
+      }];
+      setTodos(newTodos);
       setNewTodo('');
+      await storage.saveTodos(newTodos);
     }
   };
 
-  const toggleTodo = (id: string) => {
-    setTodos(todos.map(todo => 
-      todo.id === id ? { ...todo, completed: !todo.completed } : todo
-    ));
+  const toggleTodo = async (id: string) => {
+    const newTodos = todos.map(todo => 
+      todo.id === id 
+        ? { 
+            ...todo, 
+            completed: !todo.completed,
+            completedAt: !todo.completed ? Date.now() : undefined
+          } 
+        : todo
+    );
+    setTodos(newTodos);
+    await storage.saveTodos(newTodos);
+
+    // Update productivity data if task was completed
+    const todo = todos.find(t => t.id === id);
+    if (todo && !todo.completed) {
+      await storage.updateProductivityData({
+        tasksCompleted: 1
+      });
+    }
   };
 
-  const deleteTodo = (id: string) => {
-    setTodos(todos.filter(todo => todo.id !== id));
+  const deleteTodo = async (id: string) => {
+    const newTodos = todos.filter(todo => todo.id !== id);
+    setTodos(newTodos);
+    await storage.saveTodos(newTodos);
   };
 
-  const clearCompletedTasks = () => {
-    setTodos(todos.filter(todo => !todo.completed));
+  const clearCompletedTasks = async () => {
+    const newTodos = todos.filter(todo => !todo.completed);
+    setTodos(newTodos);
+    await storage.saveTodos(newTodos);
   };
 
   const progressBarStyle = useAnimatedStyle(() => ({
