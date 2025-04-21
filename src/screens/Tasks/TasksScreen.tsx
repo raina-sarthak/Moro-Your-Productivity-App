@@ -1,14 +1,21 @@
-import { Text, View, StyleSheet, TextInput, TouchableOpacity, FlatList } from 'react-native';
+import { Text, View, StyleSheet, TextInput, TouchableOpacity, FlatList, Modal } from 'react-native';
 import { useState, useEffect, useMemo } from 'react';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
-import { storage, Todo } from '../../utils/storage';
+import { storage, Todo, Priority } from '../../utils/storage';
+import { Ionicons } from '@expo/vector-icons';
 
 type TabType = 'active' | 'completed';
+type SortType = 'date' | 'priority' | 'alphabetical' | 'completion';
 
 export default function TasksScreen() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [newTodo, setNewTodo] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('active');
+  const [selectedPriority, setSelectedPriority] = useState<Priority>('medium');
+  const [sortBy, setSortBy] = useState<SortType>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
+  const [showSortModal, setShowSortModal] = useState(false);
 
   useEffect(() => {
     loadTodos();
@@ -36,7 +43,8 @@ export default function TasksScreen() {
         id: Date.now().toString(),
         text: newTodo,
         completed: false,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        priority: selectedPriority
       }];
       setTodos(newTodos);
       setNewTodo('');
@@ -80,24 +88,167 @@ export default function TasksScreen() {
 
   const progressBarStyle = useAnimatedStyle(() => ({
     width: withTiming(`${progress * 100}%`, { duration: 500 }),
+    backgroundColor: withTiming(
+      progress >= 0.8 ? '#007AFF' : 
+      progress >= 0.5 ? '#4A90E2' : 
+      progress >= 0.2 ? '#666' : '#444',
+      { duration: 500 }
+    ),
   }), [progress]);
 
+  const sortedTodos = useMemo(() => {
+    const activeTodos = todos.filter(todo => !todo.completed);
+    const completedTodos = todos.filter(todo => todo.completed);
+
+    const sortTodos = (todos: Todo[]) => {
+      return [...todos].sort((a, b) => {
+        switch (sortBy) {
+          case 'priority':
+            // Handle unmarked tasks (undefined priority)
+            if (!a.priority && !b.priority) return 0;
+            if (!a.priority) return 1; // Move unmarked to bottom
+            if (!b.priority) return -1; // Move unmarked to bottom
+            
+            const priorityOrder = { high: 0, medium: 1, low: 2 };
+            return sortDirection === 'desc' 
+              ? priorityOrder[a.priority] - priorityOrder[b.priority]
+              : priorityOrder[b.priority] - priorityOrder[a.priority];
+          
+          case 'alphabetical':
+            return sortDirection === 'desc'
+              ? a.text.localeCompare(b.text)
+              : b.text.localeCompare(a.text);
+          
+          case 'completion':
+            if (a.completedAt && b.completedAt) {
+              return sortDirection === 'desc'
+                ? b.completedAt - a.completedAt
+                : a.completedAt - b.completedAt;
+            }
+            return a.completedAt ? 1 : -1;
+          
+          default: // date
+            return sortDirection === 'desc'
+              ? b.createdAt - a.createdAt
+              : a.createdAt - b.createdAt;
+        }
+      });
+    };
+
+    return {
+      activeTodos: sortTodos(activeTodos),
+      completedTodos: sortTodos(completedTodos)
+    };
+  }, [todos, sortBy, sortDirection]);
+
+  const getPriorityColor = (priority: Priority) => {
+    switch (priority) {
+      case 'high': return '#FF453A';
+      case 'medium': return '#FFD60A';
+      case 'low': return '#32D74B';
+      default: return '#007AFF';
+    }
+  };
+
   const renderTodoItem = ({ item }: { item: Todo }) => (
-    <View style={styles.todoItem}>
-      <TouchableOpacity 
-        style={[styles.checkbox, item.completed && styles.checkboxCompleted]}
-        onPress={() => toggleTodo(item.id)}
-      />
+    <TouchableOpacity 
+      style={[styles.todoItem, { borderLeftWidth: 4, borderLeftColor: getPriorityColor(item.priority) }]}
+      onPress={() => toggleTodo(item.id)}
+      activeOpacity={0.7}
+    >
+      <View style={[styles.checkbox, item.completed && styles.checkboxCompleted]}>
+        {item.completed && (
+          <Text style={styles.checkmark}>✓</Text>
+        )}
+      </View>
       <Text style={[styles.todoText, item.completed && styles.todoTextCompleted]}>
         {item.text}
       </Text>
       <TouchableOpacity 
         style={styles.deleteButton}
-        onPress={() => deleteTodo(item.id)}
+        onPress={(e) => {
+          e.stopPropagation();
+          deleteTodo(item.id);
+        }}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
         <Text style={styles.deleteButtonText}>×</Text>
       </TouchableOpacity>
+    </TouchableOpacity>
+  );
+
+  const PriorityDropdown = () => (
+    <View style={styles.priorityDropdown}>
+      {(['high', 'medium', 'low'] as Priority[]).map((priority) => (
+        <TouchableOpacity
+          key={priority}
+          style={[
+            styles.priorityOption,
+            { backgroundColor: getPriorityColor(priority) }
+          ]}
+          onPress={() => {
+            setSelectedPriority(priority);
+            setShowPriorityDropdown(false);
+          }}
+        >
+          <Text style={styles.priorityText}>
+            {priority.charAt(0).toUpperCase() + priority.slice(1)}
+          </Text>
+        </TouchableOpacity>
+      ))}
     </View>
+  );
+
+  const toggleSortDirection = () => {
+    setSortDirection(prev => prev === 'desc' ? 'asc' : 'desc');
+  };
+
+  const SortModal = () => (
+    <Modal
+      visible={showSortModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowSortModal(false)}
+    >
+      <TouchableOpacity 
+        style={styles.modalOverlay}
+        activeOpacity={1} 
+        onPress={() => setShowSortModal(false)}
+      >
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Sort By</Text>
+          {[
+            { type: 'date', label: 'Date Added' },
+            { type: 'priority', label: 'Priority' },
+            { type: 'alphabetical', label: 'Alphabetical' }
+          ].map((option) => (
+            <TouchableOpacity
+              key={option.type}
+              style={[
+                styles.sortOption,
+                sortBy === option.type && styles.activeSortOption
+              ]}
+              onPress={() => {
+                if (sortBy === option.type) {
+                  toggleSortDirection();
+                } else {
+                  setSortBy(option.type as SortType);
+                  setSortDirection(option.type === 'alphabetical' ? 'asc' : 'desc');
+                }
+                setShowSortModal(false);
+              }}
+            >
+              <Text style={[
+                styles.sortOptionText,
+                sortBy === option.type && styles.activeSortOptionText
+              ]}>
+                {option.label} {sortBy === option.type && (sortDirection === 'desc' ? '↓' : '↑')}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </TouchableOpacity>
+    </Modal>
   );
 
   return (
@@ -111,7 +262,7 @@ export default function TasksScreen() {
             onPress={() => setActiveTab('active')}
           >
             <Text style={[styles.tabText, activeTab === 'active' && styles.activeTabText]}>
-              Active ({activeTodos.length})
+              Active ({sortedTodos.activeTodos.length})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity 
@@ -119,44 +270,60 @@ export default function TasksScreen() {
             onPress={() => setActiveTab('completed')}
           >
             <Text style={[styles.tabText, activeTab === 'completed' && styles.activeTabText]}>
-              Completed ({completedTodos.length})
+              Completed ({sortedTodos.completedTodos.length})
             </Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.mainContent}>
-          <View style={styles.listWrapper}>
-            {activeTab === 'completed' && completedTodos.length > 0 && (
+        <View style={styles.listWrapper}>
+          <View style={styles.actionsContainer}>
+            {activeTab === 'completed' && sortedTodos.completedTodos.length > 0 ? (
               <TouchableOpacity 
                 style={styles.clearButton}
                 onPress={clearCompletedTasks}
               >
                 <Text style={styles.clearButtonText}>Clear All Completed</Text>
               </TouchableOpacity>
+            ) : (
+              <View style={styles.spacer} />
             )}
-
-            <FlatList
-              data={activeTab === 'active' ? activeTodos : completedTodos}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={[
-                styles.listContainer,
-                activeTab === 'completed' && completedTodos.length > 0 && styles.listWithClearButton
-              ]}
-              renderItem={renderTodoItem}
-              ListEmptyComponent={() => (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>
-                    {activeTab === 'active' 
-                      ? "No active tasks. Add one below!" 
-                      : "No completed tasks yet."}
-                  </Text>
-                </View>
-              )}
-            />
+            <TouchableOpacity 
+              style={styles.sortButton}
+              onPress={() => setShowSortModal(true)}
+            >
+              <Text style={styles.sortButtonText}>
+                Sort: {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)} {sortDirection === 'desc' ? '↓' : '↑'}
+              </Text>
+            </TouchableOpacity>
           </View>
+
+          <FlatList
+            data={activeTab === 'active' ? sortedTodos.activeTodos : sortedTodos.completedTodos}
+            keyExtractor={(item) => item.id}
+            renderItem={renderTodoItem}
+            contentContainerStyle={[
+              styles.listContainer,
+              activeTab === 'completed' && sortedTodos.completedTodos.length > 0 && styles.listWithClearButton
+            ]}
+            ListEmptyComponent={() => (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  {activeTab === 'active' 
+                    ? "No active tasks. Add one below!" 
+                    : "No completed tasks yet."}
+                </Text>
+              </View>
+            )}
+          />
         </View>
 
         <View style={styles.progressContainer}>
+          <View style={styles.progressHeader}>
+            <Text style={styles.progressTitle}>Progress</Text>
+            <Text style={styles.progressPercentage}>
+              {Math.round(progress * 100)}%
+            </Text>
+          </View>
           <View style={styles.progressBarBackground}>
             <Animated.View style={[styles.progressBarFill, progressBarStyle]} />
           </View>
@@ -166,18 +333,36 @@ export default function TasksScreen() {
         </View>
 
         <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Add a new task..."
-            placeholderTextColor="#666"
-            value={newTodo}
-            onChangeText={setNewTodo}
-          />
+          <View style={styles.inputWrapper}>
+            <TextInput
+              style={styles.input}
+              placeholder="Add a new task..."
+              placeholderTextColor="#666"
+              value={newTodo}
+              onChangeText={setNewTodo}
+            />
+            <View style={styles.priorityContainer}>
+              {showPriorityDropdown && <PriorityDropdown />}
+              <TouchableOpacity 
+                style={[styles.priorityButton, { backgroundColor: getPriorityColor(selectedPriority) }]}
+                onPress={() => setShowPriorityDropdown(!showPriorityDropdown)}
+              >
+                <View style={styles.priorityButtonContent}>
+                  <Ionicons name="flag" size={16} color="#fff" />
+                  <Text style={styles.priorityButtonText}>
+                    {selectedPriority.charAt(0).toUpperCase() + selectedPriority.slice(1)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
           <TouchableOpacity style={styles.addButton} onPress={addTodo}>
-            <Text style={styles.addButtonText}>Add</Text>
+            <Ionicons name="add" size={28} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
+
+      <SortModal />
     </View>
   );
 }
@@ -207,17 +392,32 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
   },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  progressTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  progressPercentage: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
   progressBarBackground: {
-    height: 6,
+    height: 8,
     backgroundColor: '#222',
-    borderRadius: 3,
+    borderRadius: 4,
     overflow: 'hidden',
     marginBottom: 8,
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#007AFF',
-    borderRadius: 3,
+    borderRadius: 4,
   },
   progressText: {
     color: '#666',
@@ -241,14 +441,11 @@ const styles = StyleSheet.create({
   },
   addButton: {
     backgroundColor: '#007AFF',
-    padding: 15,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
-  },
-  addButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+    alignItems: 'center',
   },
   listWrapper: {
     flex: 1,
@@ -264,6 +461,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
     borderRadius: 10,
     marginBottom: 10,
+    minHeight: 60,
   },
   checkbox: {
     width: 24,
@@ -272,6 +470,13 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#007AFF',
     marginRight: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkmark: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   checkboxCompleted: {
     backgroundColor: '#007AFF',
@@ -280,6 +485,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: '#fff',
     fontSize: 16,
+    paddingVertical: 8,
   },
   todoTextCompleted: {
     textDecorationLine: 'line-through',
@@ -318,29 +524,142 @@ const styles = StyleSheet.create({
   activeTabText: {
     color: '#fff',
   },
+  actionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 15,
+  },
   clearButton: {
     backgroundColor: '#ff3b30',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
-    marginBottom: 15,
-    alignSelf: 'flex-end',
   },
   clearButtonText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
   },
+  sortButton: {
+    backgroundColor: '#333',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    minWidth: 120,
+  },
+  sortButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    textAlign: 'center',
+  },
   listWithClearButton: {
     paddingTop: 0,
   },
   emptyContainer: {
     padding: 20,
+    paddingTop: 150,
     alignItems: 'center',
   },
   emptyText: {
     color: '#666',
     fontSize: 16,
     textAlign: 'center',
+  },
+  inputWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  priorityContainer: {
+    position: 'relative',
+  },
+  priorityDropdown: {
+    position: 'absolute',
+    bottom: 45,
+    right: 0,
+    backgroundColor: '#333',
+    borderRadius: 10,
+    padding: 8,
+    zIndex: 1000,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  priorityOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  priorityText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  priorityButton: {
+    minWidth: 100,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  priorityButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  priorityButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#333',
+    borderRadius: 15,
+    padding: 20,
+    width: '80%',
+    maxWidth: 300,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  sortOption: {
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  activeSortOption: {
+    backgroundColor: '#2e2e2e',
+  },
+  sortOptionText: {
+    color: '#888',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  activeSortOptionText: {
+    color: '#fff',
+  },
+  spacer: {
+    width: 1,
   },
 }); 

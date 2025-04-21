@@ -1,11 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+export type Priority = 'high' | 'medium' | 'low';
+
 export type Todo = {
   id: string;
   text: string;
   completed: boolean;
   createdAt: number;
   completedAt?: number;
+  priority: Priority;
 };
 
 export type PomodoroSession = {
