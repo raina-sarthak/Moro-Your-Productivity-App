@@ -161,7 +161,7 @@ export default function TrackerScreen() {
                   fontSize: 10,
                   rotation: 45
                 },
-                formatYLabel: (value) => Math.round(value).toString(),
+                formatYLabel: (yLabel: string) => Math.round(Number(yLabel)).toString(),
               }}
               bezier
               style={styles.chart}
